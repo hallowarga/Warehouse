@@ -56,71 +56,75 @@ iframe{width:100%;height:280px;border:1px solid var(--bd);border-radius:8px;marg
 <nav id="nav"></nav>
 <div id="modal"><div id="sheet"></div></div>
 <div id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
 <script>
+const SB=supabase.createClient('https://qtylzivpxlqpmfkaogoj.supabase.co','sb_publishable_L17-GlhLmYOjIZGrbf8Vgg_lJaU-O4v');
 const $=s=>document.querySelector(s);
-let db={batches:[],moves:[]},tab='stok',q='',pend={};
-let role='petugas';
-function defaults(){db.loads=db.loads||[];db.vtypes=db.vtypes||['Pickup','Blind van','Truk engkel','Truk box','Truk chiller','Fuso','Kontainer'];db.pins=db.pins||{admin:'2222',superadmin:'1111'}}
-defaults();
-const IDB={open(){return new Promise((res,rej)=>{const r=indexedDB.open('wms',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})},async get(){const d=await this.open();return new Promise((res,rej)=>{const g=d.transaction('kv').objectStore('kv').get('db');g.onsuccess=()=>res(g.result);g.onerror=()=>rej(g.error)})},async set(v){const d=await this.open();return new Promise((res,rej)=>{const t=d.transaction('kv','readwrite');t.objectStore('kv').put(v,'db');t.oncomplete=()=>res();t.onerror=()=>rej(t.error)})}};
-function save(){IDB.set(db).catch(()=>{try{localStorage.setItem('wms',JSON.stringify(db))}catch(e){alert('Gagal menyimpan. Penyimpanan perangkat penuh atau diblokir.')}});return true}
+let me=null,tab='stok',q='',pend={},busy=false,D={batches:[],moves:[],loads:[],vtypes:[],staff:[]};
+const RL={petugas:'Petugas',admin:'Admin',superadmin:'Super Admin'};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const today=()=>new Date().toISOString().slice(0,10);
 const fmt=d=>d?new Date(d).toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}):'-';
 const fmtT=d=>new Date(d).toLocaleString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
 const days=d=>d?Math.ceil((new Date(d)-new Date(today()))/864e5):null;
+const nn=v=>v===''||v==null?null:v;
+const nm=id=>(D.staff.find(s=>s.id===id)||{}).name||'-';
+const adm=()=>me.role!=='petugas';
 function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2200)}
 function edTag(b){const n=days(b.exp);if(n===null)return'';if(n<0)return'<span class="tag bad">Kedaluwarsa</span>';if(n<=30)return`<span class="tag warn">ED ${n} hari</span>`;return''}
 function docTags(b){return(b.coa?'<span class="tag ok">COA</span>':'<span class="tag mut">Tanpa COA</span>')+(b.halal?'<span class="tag ok">Halal</span>':'')+(b.nkv?'<span class="tag ok">NKV</span>':'')}
+async function run(btn,fn){if(busy)return;busy=true;btn.disabled=true;const t=btn.textContent;btn.textContent='Menyimpan…';try{await fn()}catch(e){alert('Gagal: '+(e.message||e))}busy=false;btn.disabled=false;btn.textContent=t}
 
-function readFile(f,cb){
-  if(!f)return;
-  if(f.type.startsWith('image/')){
-    const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{
-      const s=Math.min(1,1000/Math.max(im.width,im.height)),c=document.createElement('canvas');
-      c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);
-      cb(c.toDataURL('image/jpeg',.72),'img')};im.src=r.result};r.readAsDataURL(f)
-  }else if(f.type==='application/pdf'){
-    if(f.size>700*1024){alert('PDF maksimal 700 KB. Kompres dulu atau foto dokumennya.');return}
-    const r=new FileReader();r.onload=()=>cb(r.result,'pdf');r.readAsDataURL(f)
-  }else alert('Gunakan file foto atau PDF.')
-}
-function pick(el,key){
-  readFile(el.files[0],(d,t)=>{pend[key]={d,t};
-    const L=el.parentElement;L.classList.add('has');L.querySelector('span').textContent=(t==='pdf'?'PDF dipilih: ':'Foto dipilih: ')+el.files[0].name;
-    const p=L.nextElementSibling;if(p&&p.classList.contains('prev')){if(t==='img'){p.src=d;p.style.display='block'}else p.style.display='none'}
-  })
-}
+/* file */
+function readFile(f,cb){if(!f)return;
+  if(f.type.startsWith('image/')){const im=new Image();im.onload=()=>{const s=Math.min(1,1280/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);c.toBlob(b=>cb(b,'img'),'image/jpeg',.75)};im.src=URL.createObjectURL(f)}
+  else if(f.type==='application/pdf'){if(f.size>3e6)return alert('PDF maksimal 3 MB.');cb(f,'pdf')}
+  else alert('Gunakan file foto atau PDF.')}
+function pick(el,key){const f=el.files[0];readFile(f,(b,t)=>{pend[key]={b,t};const L=el.parentElement;L.classList.add('has');L.querySelector('span').textContent=(t==='pdf'?'PDF dipilih: ':'Foto dipilih: ')+f.name;const p=L.nextElementSibling;if(p&&p.classList.contains('prev')){if(t==='img'){p.src=URL.createObjectURL(b);p.style.display='block'}else p.style.display='none'}})}
 function upl(id,key,label,cap,accept){return`<label class="up"><span>${label}</span><input type="file" id="${id}" accept="${accept}" ${cap?'capture="environment"':''} onchange="pick(this,'${key}')"></label><img class="prev" style="display:none" alt="">`}
-function docView(t,x){if(!x)return'';return`<h2>${t}</h2>`+(x.t==='img'?`<img class="prev" src="${x.d}" alt="${t}">`:`<iframe src="${x.d}" title="${t}"></iframe>`)}
+async function up(key){const x=pend[key];if(!x)return null;const p=`${me.id}/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${x.t==='pdf'?'pdf':'jpg'}`;const{error}=await SB.storage.from('docs').upload(p,x.b,{contentType:x.t==='pdf'?'application/pdf':'image/jpeg'});if(error)throw error;return p}
+async function sign(a){a=a.filter(Boolean);const m={};if(!a.length)return m;const{data}=await SB.storage.from('docs').createSignedUrls(a,3600);(data||[]).forEach(d=>{if(d.signedUrl)m[d.path]=d.signedUrl});return m}
+function dv(t,p,m){if(!p||!m[p])return'';return`<h2>${t}</h2>`+(p.endsWith('.pdf')?`<iframe src="${m[p]}" title="${t}"></iframe>`:`<img class="prev" src="${m[p]}" alt="${t}">`)}
 
-function render(){
-  pend={};
-  $('#nav').innerHTML=[['stok','Stok'],['in','Masuk'],['out','Keluar'],['load','Loading'],['log','Riwayat']].map(([k,l])=>`<button ${tab===k?'aria-current="true"':''} onclick="tab='${k}';q='';render();scrollTo(0,0)">${l}</button>`).join('');
-  $('#app').innerHTML=roleBar()+{stok:vStok,in:vIn,out:vOut,load:vLoad,log:vLog}[tab]();
-}
-function vStok(){
-  const a=db.batches,tot=a.reduce((s,b)=>s+b.stock,0),exp=a.filter(b=>b.stock>0&&days(b.exp)!==null&&days(b.exp)<=30).length;
-  const list=a.filter(b=>(b.name+b.batch+b.sku+(b.loc||'')).toLowerCase().includes(q.toLowerCase())).sort((x,y)=>(x.stock===0)-(y.stock===0)||(x.exp||'9').localeCompare(y.exp||'9'));
-  return`<h1>Stok gudang</h1><div class="stats"><div><b>${a.filter(b=>b.stock>0).length}</b><span>Batch aktif</span></div><div><b>${tot}</b><span>Total unit</span></div><div><b class="${exp?'warn':''}">${exp}</b><span>ED ≤ 30 hari</span></div></div>
-  <input type="search" placeholder="Cari nama, SKU, batch, rak" value="${esc(q)}" oninput="q=this.value;$('#lst').innerHTML=lst()" aria-label="Cari"><div id="lst" style="margin-top:10px">${lst()}</div>`
-}
-function lst(){
-  const list=db.batches.filter(b=>(b.name+b.batch+b.sku+(b.loc||'')+(b.seal||'')+(b.rph||'')).toLowerCase().includes(q.toLowerCase())).sort((x,y)=>(x.stock===0)-(y.stock===0)||(x.exp||'9').localeCompare(y.exp||'9'));
-  if(!db.batches.length)return'<div class="card mut">Belum ada stok. Buka tab Masuk untuk mencatat barang pertama.</div>';
-  if(!list.length)return'<div class="card mut">Tidak ada hasil.</div>';
-  return list.map(b=>`<div class="card item" onclick="detail('${b.id}')"><div><b>${esc(b.name)}</b><br><small>Batch ${esc(b.batch)}${b.loc?' · Rak '+esc(b.loc):''}<br>ED ${fmt(b.exp)}</small><div style="margin-top:4px">${edTag(b)}${docTags(b)}</div></div><div class="qty ${b.stock===0?'mut':''}">${b.stock}<br><small>${esc(b.unit)}</small></div></div>`).join('')
-}
-function detail(id){
-  const b=db.batches.find(x=>x.id===id);if(!b)return;
-  const mv=db.moves.filter(m=>m.bid===id).reverse().map(m=>`<div class="mut">${fmtT(m.date)} · ${m.type==='in'?'Masuk':'Keluar'} ${m.qty} ${esc(b.unit)}${m.party?' · '+esc(m.party):''}</div>`).join('');
-  $('#sheet').innerHTML=`<h1>${esc(b.name)}</h1><div class="card">SKU: ${esc(b.sku||'-')}<br>Batch: ${esc(b.batch)}<br>Supplier: ${esc(b.supplier||'-')}<br>No. surat jalan: ${esc(b.sjNo||'-')}<br>Produksi: ${fmt(b.mfg)} · ED: ${fmt(b.exp)}<br>Rak: ${esc(b.loc||'-')}<br>Stok: <b>${b.stock}</b> dari ${b.qty} ${esc(b.unit)}<br>No. sertifikat halal: ${esc(b.halalNo||'-')}<br>Kode rumah potong: ${esc(b.rph||'-')}<br>Suhu terima: ${b.temp?esc(b.temp)+' °C':'-'}<br>Kode segel: ${esc(b.seal||'-')}<br>No. NKV: ${esc(b.nkvNo||'-')}</div>
-  ${docView('Foto kode batch',b.photo)}${docView('Foto surat jalan',b.sj)}${docView('COA',b.coa)}${docView('Sertifikat halal',b.halal)}${docView('Sertifikat NKV',b.nkv)}<h2>Pergerakan</h2>${mv}<button class="btn ghost" onclick="closeM()">Tutup</button>`;
-  $('#modal').classList.add('on');
-}
+/* data */
+async function refresh(){
+  const r=await Promise.all([SB.from('batches').select('*').order('created_at',{ascending:false}).limit(1000),SB.from('moves').select('*,batches(name,batch_no,unit)').order('created_at',{ascending:false}).limit(200),SB.from('loads').select('*').order('created_at',{ascending:false}).limit(100),SB.from('vehicle_types').select('*').order('name'),SB.from('profiles').select('*').order('name')]);
+  const e=r.find(x=>x.error);if(e){alert('Gagal memuat data: '+e.error.message);return}
+  [D.batches,D.moves,D.loads,D.vtypes,D.staff]=r.map(x=>x.data)}
+
+/* shell */
+function roleBar(){return`<div class="rb"><span>Masuk sebagai <b>${esc(me.name)}</b> (${RL[me.role]})</span><button onclick="logout()">Keluar</button></div>`}
+function render(){pend={};
+  $('#nav').innerHTML=[['stok','Stok'],['in','Masuk'],['out','Keluar'],['load','Loading'],['log','Riwayat']].map(([k,l])=>`<button ${tab===k?'aria-current="true"':''} onclick="go('${k}')">${l}</button>`).join('');
+  $('#app').innerHTML=roleBar()+{stok:vStok,in:vIn,out:vOut,load:vLoad,log:vLog}[tab]()}
+async function go(t){tab=t;q='';$('#app').innerHTML=roleBar()+'<div class="card mut">Memuat…</div>';await refresh();render();scrollTo(0,0)}
+function vLogin(){$('#nav').innerHTML='';$('#app').innerHTML=`<h1>Gudang</h1><div class="card"><label>Nama</label><input id="lgn" autocapitalize="none" autocomplete="username"><label>PIN</label><input id="lgp" type="password" inputmode="numeric" autocomplete="current-password"><button class="btn" onclick="run(this,doLogin)">Masuk</button></div>`}
+async function doLogin(){const n=$('#lgn').value.trim().toLowerCase().replace(/\s/g,''),p=$('#lgp').value;if(!n||!p)return alert('Isi nama dan PIN.');
+  const{error}=await SB.auth.signInWithPassword({email:n+'@gudang.app',password:p});if(error)return alert('Nama atau PIN salah.');await boot()}
+async function boot(){const{data:{session}}=await SB.auth.getSession();if(!session)return vLogin();
+  const{data:p,error}=await SB.from('profiles').select('*').eq('id',session.user.id).single();
+  if(error||!p||!p.active){await SB.auth.signOut();vLogin();return alert('Akun tidak aktif atau tidak ditemukan.')}
+  me=p;go('stok')}
+function logout(){SB.auth.signOut().then(()=>{me=null;vLogin()})}
 function closeM(){$('#modal').classList.remove('on')}
 $('#modal').onclick=e=>{if(e.target.id==='modal')closeM()};
 
+/* stok */
+function vStok(){const a=D.batches,exp=a.filter(b=>b.stock>0&&days(b.exp)!==null&&days(b.exp)<=30).length;
+  return`<h1>Stok gudang</h1><div class="stats"><div><b>${a.filter(b=>b.stock>0).length}</b><span>Batch aktif</span></div><div><b>${a.reduce((s,b)=>s+b.stock,0)}</b><span>Total unit</span></div><div><b class="${exp?'warn':''}">${exp}</b><span>ED ≤ 30 hari</span></div></div>
+  <input type="search" placeholder="Cari nama, SKU, batch, rak, segel" value="${esc(q)}" oninput="q=this.value;$('#lst').innerHTML=lst()" aria-label="Cari"><div id="lst" style="margin-top:10px">${lst()}</div>`}
+function lst(){const t=q.toLowerCase(),l=D.batches.filter(b=>[b.name,b.batch_no,b.sku,b.loc,b.seal,b.rph].join(' ').toLowerCase().includes(t)).sort((x,y)=>(x.stock===0)-(y.stock===0)||(x.exp||'9').localeCompare(y.exp||'9'));
+  if(!D.batches.length)return'<div class="card mut">Belum ada stok. Buka tab Masuk untuk mencatat barang pertama.</div>';
+  if(!l.length)return'<div class="card mut">Tidak ada hasil.</div>';
+  return l.map(b=>`<div class="card item" onclick="detail('${b.id}')"><div><b>${esc(b.name)}</b><br><small>Batch ${esc(b.batch_no)}${b.loc?' · Rak '+esc(b.loc):''}<br>ED ${fmt(b.exp)}</small><div style="margin-top:4px">${edTag(b)}${docTags(b)}</div></div><div class="qty ${b.stock===0?'mut':''}">${b.stock}<br><small>${esc(b.unit)}</small></div></div>`).join('')}
+async function detail(id){const b=D.batches.find(x=>x.id===id);if(!b)return;
+  $('#sheet').innerHTML='<div class="mut">Memuat…</div>';$('#modal').classList.add('on');
+  const m=await sign([b.photo_batch,b.photo_sj,b.coa,b.halal,b.nkv]);
+  const mv=D.moves.filter(x=>x.batch_id===id).map(x=>`<div class="mut">${fmtT(x.created_at)} · ${x.type==='in'?'Masuk':'Keluar'} ${x.qty} ${esc(b.unit)}${x.party?' · '+esc(x.party):''} · ${esc(nm(x.created_by))}</div>`).join('');
+  $('#sheet').innerHTML=`<h1>${esc(b.name)}</h1><div class="card">SKU: ${esc(b.sku||'-')}<br>Batch: ${esc(b.batch_no)}<br>Supplier: ${esc(b.supplier||'-')}<br>No. surat jalan: ${esc(b.sj_no||'-')}<br>Produksi: ${fmt(b.mfg)} · ED: ${fmt(b.exp)}<br>Rak: ${esc(b.loc||'-')}<br>Stok: <b>${b.stock}</b> dari ${b.qty} ${esc(b.unit)}<br>No. sertifikat halal: ${esc(b.halal_no||'-')}<br>Kode rumah potong: ${esc(b.rph||'-')}<br>Suhu terima: ${b.temp!=null?esc(b.temp)+' °C':'-'}<br>Kode segel: ${esc(b.seal||'-')}<br>No. NKV: ${esc(b.nkv_no||'-')}<br>Dicatat oleh: ${esc(nm(b.created_by))}</div>
+  ${dv('Foto kode batch',b.photo_batch,m)}${dv('Foto surat jalan',b.photo_sj,m)}${dv('COA',b.coa,m)}${dv('Sertifikat halal',b.halal,m)}${dv('Sertifikat NKV',b.nkv,m)}<h2>Pergerakan</h2>${mv}<button class="btn ghost" onclick="closeM()">Tutup</button>`}
+
+/* masuk */
 function vIn(){return`<h1>Barang masuk</h1><div class="card">
 <label>Nama barang</label><input id="n" autocomplete="off">
 <div class="row"><div><label>SKU <small>(opsional)</small></label><input id="sku"></div><div><label>Satuan</label><input id="u" value="pcs"></div></div>
@@ -138,61 +142,36 @@ function vIn(){return`<h1>Barang masuk</h1><div class="card">
 <div class="row"><div><label>Suhu terima °C <small>(opsional)</small></label><input id="tmp" type="number" inputmode="decimal" step="0.1"></div><div><label>Kode segel <small>(opsional)</small></label><input id="sg"></div></div>
 <label>Sertifikat NKV <small>(opsional)</small></label>${upl('fn','nkv','Unggah sertifikat NKV',false,'image/*,application/pdf')}
 <label>No. NKV <small>(opsional)</small></label><input id="nk">
-<button class="btn" onclick="subIn()">Simpan barang masuk</button></div>`}
-function subIn(){
-  const v=i=>$('#'+i).value.trim(),qty=parseFloat(v('qt'));
-  if(!v('n'))return alert('Nama barang wajib diisi.');
-  if(!v('bt'))return alert('No. batch wajib diisi.');
-  if(!(qty>0))return alert('Jumlah harus lebih dari 0.');
-  if(!pend.photo)return alert('Foto kode batch wajib diunggah.');
-  if(!pend.sj)return alert('Foto surat jalan wajib diunggah.');
-  const id='b'+Date.now(),now=new Date().toISOString();
-  db.batches.push({id,name:v('n'),sku:v('sku'),unit:v('u')||'pcs',supplier:v('sup'),batch:v('bt'),qty,stock:qty,mfg:v('mfg'),exp:v('exp'),loc:v('loc'),halalNo:v('hn'),rph:v('rph'),temp:v('tmp'),seal:v('sg'),nkvNo:v('nk'),nkv:pend.nkv||null,photo:pend.photo,sj:pend.sj,sjNo:v('sjn'),coa:pend.coa||null,halal:pend.halal||null,date:now});
-  db.moves.push({id:'m'+Date.now(),type:'in',bid:id,name:v('n'),batch:v('bt'),qty,unit:v('u')||'pcs',party:v('sup'),doc:v('sjn'),date:now});
-  if(!save()){db.batches.pop();db.moves.pop();return}
-  toast('Barang masuk tersimpan');tab='stok';render();
-}
+<button class="btn" onclick="run(this,subIn)">Simpan barang masuk</button></div>`}
+async function subIn(){const v=i=>$('#'+i).value.trim(),qty=parseFloat(v('qt'));
+  if(!v('n'))return alert('Nama barang wajib diisi.');if(!v('bt'))return alert('No. batch wajib diisi.');if(!(qty>0))return alert('Jumlah harus lebih dari 0.');
+  if(!pend.photo)return alert('Foto kode batch wajib diunggah.');if(!pend.sj)return alert('Foto surat jalan wajib diunggah.');
+  const[pb,ps,pc,ph,pn]=await Promise.all(['photo','sj','coa','halal','nkv'].map(k=>up(k)));
+  const{error}=await SB.from('batches').insert({name:v('n'),sku:nn(v('sku')),unit:v('u')||'pcs',supplier:nn(v('sup')),batch_no:v('bt'),qty,mfg:nn(v('mfg')),exp:nn(v('exp')),loc:nn(v('loc')),halal_no:nn(v('hn')),rph:nn(v('rph')),temp:nn(v('tmp')),seal:nn(v('sg')),nkv_no:nn(v('nk')),sj_no:nn(v('sjn')),photo_batch:pb,photo_sj:ps,coa:pc,halal:ph,nkv:pn});
+  if(error)throw error;toast('Barang masuk tersimpan');await go('stok')}
 
-function avail(){return db.batches.filter(b=>b.stock>0).sort((x,y)=>(x.exp||'9').localeCompare(y.exp||'9'))}
-function vOut(){
-  const a=avail();
-  if(!a.length)return'<h1>Barang keluar</h1><div class="card mut">Belum ada stok yang bisa dikeluarkan.</div>';
+/* keluar */
+const avail=()=>D.batches.filter(b=>b.stock>0).sort((x,y)=>(x.exp||'9').localeCompare(y.exp||'9'));
+function vOut(){const a=avail();if(!a.length)return'<h1>Barang keluar</h1><div class="card mut">Belum ada stok yang bisa dikeluarkan.</div>';
   return`<h1>Barang keluar</h1><div class="card"><label>Pilih batch <small>(urut ED terdekat)</small></label>
-<select id="ob" onchange="obInfo()">${a.map(b=>`<option value="${b.id}">${esc(b.name)} · ${esc(b.batch)} · sisa ${b.stock} ${esc(b.unit)}</option>`).join('')}</select><div id="oi" class="mut" style="margin-top:6px"></div>
+<select id="ob" onchange="obInfo()">${a.map(b=>`<option value="${b.id}">${esc(b.name)} · ${esc(b.batch_no)} · sisa ${b.stock} ${esc(b.unit)}</option>`).join('')}</select><div id="oi" class="mut" style="margin-top:6px"></div>
 <label>Jumlah keluar</label><input id="oq" type="number" inputmode="decimal" min="0">
 <label>Tujuan atau customer</label><input id="op">
 <label>No. surat jalan <small>(opsional)</small></label><input id="od">
-<button class="btn out" onclick="subOut()">Simpan barang keluar</button></div>`
-}
-function obInfo(){const b=db.batches.find(x=>x.id===$('#ob').value);if(b)$('#oi').innerHTML=`Stok ${b.stock} ${esc(b.unit)} · ED ${fmt(b.exp)} ${edTag(b)}`}
-function subOut(){
-  const b=db.batches.find(x=>x.id===$('#ob').value),qty=parseFloat($('#oq').value);
-  if(!(qty>0))return alert('Jumlah harus lebih dari 0.');
-  if(qty>b.stock)return alert(`Stok tidak cukup. Sisa ${b.stock} ${b.unit}.`);
-  if(!$('#op').value.trim())return alert('Tujuan wajib diisi.');
-  const first=avail().find(x=>x.name===b.name&&x.id!==b.id&&x.exp&&b.exp&&x.exp<b.exp);
-  if(first&&!confirm(`Batch ${first.batch} untuk barang yang sama punya ED lebih dekat (${fmt(first.exp)}). Tetap keluarkan batch ini?`))return;
+<button class="btn out" onclick="run(this,subOut)">Simpan barang keluar</button></div>`}
+function obInfo(){const b=D.batches.find(x=>x.id===$('#ob').value);if(b)$('#oi').innerHTML=`Stok ${b.stock} ${esc(b.unit)} · ED ${fmt(b.exp)} ${edTag(b)}`}
+async function subOut(){const b=D.batches.find(x=>x.id===$('#ob').value),qty=parseFloat($('#oq').value);
+  if(!(qty>0))return alert('Jumlah harus lebih dari 0.');if(qty>b.stock)return alert(`Stok tidak cukup. Sisa ${b.stock} ${b.unit}.`);if(!$('#op').value.trim())return alert('Tujuan wajib diisi.');
+  const f=avail().find(x=>x.name===b.name&&x.id!==b.id&&x.exp&&b.exp&&x.exp<b.exp);
+  if(f&&!confirm(`Batch ${f.batch_no} untuk barang yang sama punya ED lebih dekat (${fmt(f.exp)}). Tetap keluarkan batch ini?`))return;
   if(days(b.exp)!==null&&days(b.exp)<0&&!confirm('Batch ini sudah kedaluwarsa. Tetap keluarkan?'))return;
-  b.stock-=qty;const now=new Date().toISOString();
-  db.moves.push({id:'m'+Date.now(),type:'out',bid:b.id,name:b.name,batch:b.batch,qty,unit:b.unit,party:$('#op').value.trim(),doc:$('#od').value.trim(),date:now});
-  if(!save()){b.stock+=qty;db.moves.pop();return}
-  toast('Barang keluar tersimpan');tab='stok';render();
-}
+  const{error}=await SB.rpc('do_outbound',{p_batch:b.id,p_qty:qty,p_party:$('#op').value.trim(),p_doc:nn($('#od').value.trim())});
+  if(error)throw error;toast('Barang keluar tersimpan');await go('stok')}
 
-function vLog(){
-  const m=db.moves.slice().reverse();
-  return`<h1>Riwayat</h1>${m.length?m.map(x=>`<div class="card mv ${x.type==='out'?'o':''}"><b>${x.type==='in'?'Masuk':'Keluar'} · ${esc(x.name)}</b><br>Batch ${esc(x.batch)} · ${x.qty} ${esc(x.unit)}<br><small class="mut">${fmtT(x.date)}${x.party?' · '+esc(x.party):''}${x.doc?' · SJ '+esc(x.doc):''}</small></div>`).join(''):'<div class="card mut">Belum ada transaksi.</div>'}
-  ${role==='superadmin'?`<button class="btn ghost" onclick="if(confirm('Hapus semua data gudang di perangkat ini?')){db={batches:[],moves:[],loads:[],vtypes:db.vtypes,pins:db.pins};save();render()}">Hapus semua data</button>`:''}`
-}
-const RL={petugas:'Petugas',admin:'Admin',superadmin:'Super Admin'};
-function roleBar(){return`<div class="rb"><span>Masuk sebagai <b>${RL[role]}</b></span><button onclick="switchRole()">Ganti peran</button></div>`}
-function switchRole(){$('#sheet').innerHTML=`<h1>Ganti peran</h1><label>Peran</label><select id="rl"><option value="petugas">Petugas</option><option value="admin">Admin</option><option value="superadmin">Super Admin</option></select><label>PIN <small>(untuk Admin dan Super Admin)</small></label><input id="rp" type="password" inputmode="numeric"><button class="btn" onclick="doRole()">Masuk</button><button class="btn ghost" onclick="closeM()">Batal</button>`;$('#modal').classList.add('on')}
-function doRole(){const k=$('#rl').value;if(k!=='petugas'&&$('#rp').value!==db.pins[k])return alert('PIN salah.');role=k;closeM();render()}
-function vLoad(){
-  const ls=db.loads.slice().reverse();
-  return`<h1>Loading mobil</h1><div class="card">
+/* loading */
+function vLoad(){return`<h1>Loading mobil</h1><div class="card">
 <label>Plat nomor kendaraan</label><input id="pl" autocapitalize="characters" autocomplete="off" placeholder="B 1234 XYZ">
-<label>Jenis kendaraan</label><select id="vt">${db.vtypes.map(t=>`<option>${esc(t)}</option>`).join('')}</select>
+<label>Jenis kendaraan</label><select id="vt">${D.vtypes.map(t=>`<option>${esc(t.name)}</option>`).join('')}</select>
 <div class="row"><div><label>Suhu chiller °C <small>(opsional)</small></label><input id="ct" type="number" inputmode="decimal" step="0.1"></div><div><label>No. KIR <small>(opsional)</small></label><input id="kn"></div></div>
 <label>Buku KIR <small>(opsional)</small></label>${upl('fk','kir','Unggah buku KIR',false,'image/*,application/pdf')}
 <h2>Cek kendaraan berhenti</h2>
@@ -202,33 +181,30 @@ function vLoad(){
 <h2>Safety</h2>
 <label>Foto safety anggota loading <small>(opsional)</small></label>${upl('fa','safety','Ketuk untuk ambil foto anggota loading',true,'image/*')}
 <label>No. surat jalan atau catatan <small>(opsional)</small></label><input id="ln">
-<button class="btn" onclick="subLoad()">Simpan loading</button></div>
-${role!=='petugas'?vtAdmin():''}
-<h2>Riwayat loading</h2>${ls.length?ls.map(l=>`<div class="card item" onclick="loadDetail('${l.id}')"><div><b>${esc(l.plat)}</b><br><small>${esc(l.type)}${l.temp?' · '+esc(l.temp)+' °C':''}<br>${fmtT(l.date)}</small></div><div><span class="tag ok">Rem</span><span class="tag ok">Ganjal</span><span class="tag ok">Segitiga</span>${l.safety?'<span class="tag ok">Safety</span>':''}</div></div>`).join(''):'<div class="card mut">Belum ada loading.</div>'}`
-}
-function subLoad(){
-  const v=i=>$('#'+i).value.trim(),plat=v('pl').toUpperCase();
-  if(!plat)return alert('Plat nomor wajib diisi.');
-  if(!v('vt'))return alert('Belum ada jenis kendaraan. Minta Admin menambahkannya.');
-  if(!pend.rem)return alert('Foto hand rem wajib diunggah.');
-  if(!pend.ganjal)return alert('Foto ganjalan roda wajib diunggah.');
-  if(!pend.segitiga)return alert('Foto segitiga pengaman wajib diunggah.');
-  db.loads.push({id:'l'+Date.now(),plat,type:v('vt'),temp:v('ct'),kirNo:v('kn'),kir:pend.kir||null,rem:pend.rem,ganjal:pend.ganjal,segitiga:pend.segitiga,safety:pend.safety||null,note:v('ln'),date:new Date().toISOString()});
-  save();toast('Loading tersimpan');render();
-}
-function loadDetail(id){
-  const l=db.loads.find(x=>x.id===id);if(!l)return;
-  $('#sheet').innerHTML=`<h1>${esc(l.plat)}</h1><div class="card">Jenis: ${esc(l.type)}<br>Waktu: ${fmtT(l.date)}<br>Suhu chiller: ${l.temp?esc(l.temp)+' °C':'-'}<br>No. KIR: ${esc(l.kirNo||'-')}<br>Catatan: ${esc(l.note||'-')}</div>${docView('Buku KIR',l.kir)}${docView('Hand rem',l.rem)}${docView('Ganjalan roda',l.ganjal)}${docView('Segitiga pengaman',l.segitiga)}${docView('Safety anggota loading',l.safety)}<button class="btn ghost" onclick="closeM()">Tutup</button>`;
-  $('#modal').classList.add('on');
-}
-function vtAdmin(){return`<div class="card"><b>Kelola jenis kendaraan</b>${db.vtypes.map((t,i)=>`<div class="item" style="margin-top:8px;align-items:center;cursor:default"><span>${esc(t)}</span><span><button class="btn ghost sm" onclick="vtEdit(${i})">Ubah</button> <button class="btn ghost sm" onclick="vtDel(${i})">Hapus</button></span></div>`).join('')}<div class="row" style="margin-top:12px"><input id="nvt" placeholder="Jenis baru"><button class="btn sm" onclick="vtAdd()">Tambah</button></div>${role==='superadmin'?'<button class="btn ghost" onclick="pinForm()">Ubah PIN</button>':''}</div>`}
-function vtAdd(){if(role==='petugas')return;const n=$('#nvt').value.trim();if(!n)return alert('Isi nama jenis kendaraan.');if(db.vtypes.some(t=>t.toLowerCase()===n.toLowerCase()))return alert('Jenis kendaraan sudah ada.');db.vtypes.push(n);save();render()}
-function vtEdit(i){if(role==='petugas')return;const n=(prompt('Ubah nama jenis kendaraan',db.vtypes[i])||'').trim();if(!n)return;db.vtypes[i]=n;save();render()}
-function vtDel(i){if(role==='petugas')return;if(confirm('Hapus jenis "'+db.vtypes[i]+'"? Data loading lama tidak berubah.')){db.vtypes.splice(i,1);save();render()}}
-function pinForm(){if(role!=='superadmin')return;const a=prompt('PIN baru Admin (4 sampai 8 angka)',db.pins.admin);if(a&&/^\d{4,8}$/.test(a))db.pins.admin=a;const s=prompt('PIN baru Super Admin (4 sampai 8 angka)',db.pins.superadmin);if(s&&/^\d{4,8}$/.test(s))db.pins.superadmin=s;save();toast('PIN diperbarui')}
-(async()=>{let d=null;try{d=await IDB.get()}catch(e){}
-if(!d)try{d=JSON.parse(localStorage.getItem('wms')||'null')}catch(e){}
-if(d&&d.batches)db=d;defaults();render()})();
+<button class="btn" onclick="run(this,subLoad)">Simpan loading</button></div>
+${adm()?vtAdmin():''}
+<h2>Riwayat loading</h2>${D.loads.length?D.loads.map(l=>`<div class="card item" onclick="loadDetail('${l.id}')"><div><b>${esc(l.plat)}</b><br><small>${esc(l.vehicle_type)}${l.chiller_temp!=null?' · '+esc(l.chiller_temp)+' °C':''}<br>${fmtT(l.created_at)} · ${esc(nm(l.created_by))}</small></div><div><span class="tag ok">Rem</span><span class="tag ok">Ganjal</span><span class="tag ok">Segitiga</span>${l.safety_file?'<span class="tag ok">Safety</span>':''}</div></div>`).join(''):'<div class="card mut">Belum ada loading.</div>'}`}
+async function subLoad(){const v=i=>$('#'+i).value.trim(),plat=v('pl').toUpperCase();
+  if(!plat)return alert('Plat nomor wajib diisi.');if(!v('vt'))return alert('Belum ada jenis kendaraan. Minta Admin menambahkannya.');
+  if(!pend.rem)return alert('Foto hand rem wajib diunggah.');if(!pend.ganjal)return alert('Foto ganjalan roda wajib diunggah.');if(!pend.segitiga)return alert('Foto segitiga pengaman wajib diunggah.');
+  const[k,r,g,s,a]=await Promise.all(['kir','rem','ganjal','segitiga','safety'].map(x=>up(x)));
+  const{error}=await SB.from('loads').insert({plat,vehicle_type:v('vt'),chiller_temp:nn(v('ct')),kir_no:nn(v('kn')),kir_file:k,rem_file:r,ganjal_file:g,segitiga_file:s,safety_file:a,note:nn(v('ln'))});
+  if(error)throw error;toast('Loading tersimpan');await go('load')}
+async function loadDetail(id){const l=D.loads.find(x=>x.id===id);if(!l)return;
+  $('#sheet').innerHTML='<div class="mut">Memuat…</div>';$('#modal').classList.add('on');
+  const m=await sign([l.kir_file,l.rem_file,l.ganjal_file,l.segitiga_file,l.safety_file]);
+  $('#sheet').innerHTML=`<h1>${esc(l.plat)}</h1><div class="card">Jenis: ${esc(l.vehicle_type)}<br>Waktu: ${fmtT(l.created_at)}<br>Petugas: ${esc(nm(l.created_by))}<br>Suhu chiller: ${l.chiller_temp!=null?esc(l.chiller_temp)+' °C':'-'}<br>No. KIR: ${esc(l.kir_no||'-')}<br>Catatan: ${esc(l.note||'-')}</div>${dv('Buku KIR',l.kir_file,m)}${dv('Hand rem',l.rem_file,m)}${dv('Ganjalan roda',l.ganjal_file,m)}${dv('Segitiga pengaman',l.segitiga_file,m)}${dv('Safety anggota loading',l.safety_file,m)}<button class="btn ghost" onclick="closeM()">Tutup</button>`}
+function vtAdmin(){return`<div class="card"><b>Kelola jenis kendaraan</b>${D.vtypes.map(t=>`<div class="item" style="margin-top:8px;align-items:center;cursor:default"><span>${esc(t.name)}</span><span><button class="btn ghost sm" onclick="vtEdit(${t.id})">Ubah</button> <button class="btn ghost sm" onclick="vtDel(${t.id})">Hapus</button></span></div>`).join('')}<div class="row" style="margin-top:12px"><input id="nvt" placeholder="Jenis baru"><button class="btn sm" onclick="vtAdd()">Tambah</button></div></div>`}
+async function vtDo(p){const{error}=await p;if(error)alert(error.message);await refresh();render()}
+function vtAdd(){const n=$('#nvt').value.trim();if(!n)return alert('Isi nama jenis kendaraan.');vtDo(SB.from('vehicle_types').insert({name:n}))}
+function vtEdit(id){const t=D.vtypes.find(x=>x.id===id),n=(prompt('Ubah nama jenis kendaraan',t.name)||'').trim();if(n)vtDo(SB.from('vehicle_types').update({name:n}).eq('id',id))}
+function vtDel(id){const t=D.vtypes.find(x=>x.id===id);if(confirm('Hapus jenis "'+t.name+'"? Data loading lama tidak berubah.'))vtDo(SB.from('vehicle_types').delete().eq('id',id))}
+
+/* riwayat */
+function vLog(){return`<h1>Riwayat</h1>${D.moves.length?D.moves.map(x=>{const b=x.batches||{};return`<div class="card mv ${x.type==='out'?'o':''}"><b>${x.type==='in'?'Masuk':'Keluar'} · ${esc(b.name||'-')}</b><br>Batch ${esc(b.batch_no||'-')} · ${x.qty} ${esc(b.unit||'')}<br><small class="mut">${fmtT(x.created_at)}${x.party?' · '+esc(x.party):''}${x.doc?' · SJ '+esc(x.doc):''} · ${esc(nm(x.created_by))}</small></div>`}).join(''):'<div class="card mut">Belum ada transaksi.</div>'}${me.role==='superadmin'?vStaff():''}`}
+function vStaff(){return`<h2>Kelola petugas</h2><div class="card">${D.staff.map(s=>{const self=s.id===me.id?'disabled':'';return`<div class="item" style="cursor:default;align-items:center;margin-bottom:8px"><span>${esc(s.name)}</span><span><select style="width:auto" ${self} onchange="setStaff('${s.id}',{role:this.value})">${['petugas','admin','superadmin'].map(r=>`<option value="${r}" ${s.role===r?'selected':''}>${RL[r]}</option>`).join('')}</select> <label style="display:inline"><input type="checkbox" style="width:auto" ${self} ${s.active?'checked':''} onchange="setStaff('${s.id}',{active:this.checked})"> Aktif</label></span></div>`}).join('')}<small class="mut">Petugas baru dibuat di Supabase: Authentication → Users.</small></div>`}
+async function setStaff(id,p){const{error}=await SB.from('profiles').update(p).eq('id',id);if(error)alert(error.message);await refresh();render()}
+boot();
 </script>
 <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(function(){});</script>
 </body>
