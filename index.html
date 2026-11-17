@@ -172,6 +172,11 @@ async function subOut(){const b=D.batches.find(x=>x.id===$('#ob').value),qty=par
 function vLoad(){return`<h1>Loading mobil</h1><div class="card">
 <label>Plat nomor kendaraan</label><input id="pl" autocapitalize="characters" autocomplete="off" placeholder="B 1234 XYZ">
 <label>Jenis kendaraan</label><select id="vt">${D.vtypes.map(t=>`<option>${esc(t.name)}</option>`).join('')}</select>
+<label>Nama supir</label><input id="drv" autocomplete="off">
+<label>Nama supplier</label><input id="lsp" autocomplete="off">
+<div class="row"><div><label>Jumlah qty barang masuk <small>(opsional)</small></label><input id="lqt" type="number" inputmode="decimal" min="0"></div><div><label>Satuan <small>(opsional)</small></label><input id="lun" placeholder="karton"></div></div>
+<small class="mut">Qty hanya untuk laporan, tidak mengubah stok.</small>
+<label>Foto surat jalan</label>${upl('fl','lsj','Ketuk untuk ambil foto surat jalan',true,'image/*')}
 <div class="row"><div><label>Suhu chiller °C <small>(opsional)</small></label><input id="ct" type="number" inputmode="decimal" step="0.1"></div><div><label>No. KIR <small>(opsional)</small></label><input id="kn"></div></div>
 <label>Buku KIR <small>(opsional)</small></label>${upl('fk','kir','Unggah buku KIR',false,'image/*,application/pdf')}
 <h2>Cek kendaraan berhenti</h2>
@@ -183,17 +188,17 @@ function vLoad(){return`<h1>Loading mobil</h1><div class="card">
 <label>No. surat jalan atau catatan <small>(opsional)</small></label><input id="ln">
 <button class="btn" onclick="run(this,subLoad)">Simpan loading</button></div>
 ${adm()?vtAdmin():''}
-<h2>Riwayat loading</h2>${D.loads.length?D.loads.map(l=>`<div class="card item" onclick="loadDetail('${l.id}')"><div><b>${esc(l.plat)}</b><br><small>${esc(l.vehicle_type)}${l.chiller_temp!=null?' · '+esc(l.chiller_temp)+' °C':''}<br>${fmtT(l.created_at)} · ${esc(nm(l.created_by))}</small></div><div><span class="tag ok">Rem</span><span class="tag ok">Ganjal</span><span class="tag ok">Segitiga</span>${l.safety_file?'<span class="tag ok">Safety</span>':''}</div></div>`).join(''):'<div class="card mut">Belum ada loading.</div>'}`}
+<h2>Riwayat loading</h2>${D.loads.length?D.loads.map(l=>`<div class="card item" onclick="loadDetail('${l.id}')"><div><b>${esc(l.plat)}</b><br><small>${esc(l.vehicle_type)}${l.driver?' · '+esc(l.driver):''}${l.chiller_temp!=null?' · '+esc(l.chiller_temp)+' °C':''}<br>${fmtT(l.created_at)} · ${esc(nm(l.created_by))}</small></div><div><span class="tag ok">Rem</span><span class="tag ok">Ganjal</span><span class="tag ok">Segitiga</span>${l.safety_file?'<span class="tag ok">Safety</span>':''}</div></div>`).join(''):'<div class="card mut">Belum ada loading.</div>'}`}
 async function subLoad(){const v=i=>$('#'+i).value.trim(),plat=v('pl').toUpperCase();
-  if(!plat)return alert('Plat nomor wajib diisi.');if(!v('vt'))return alert('Belum ada jenis kendaraan. Minta Admin menambahkannya.');
+  if(!plat)return alert('Plat nomor wajib diisi.');if(!v('drv'))return alert('Nama supir wajib diisi.');if(!v('lsp'))return alert('Nama supplier wajib diisi.');if(!pend.lsj)return alert('Foto surat jalan wajib diunggah.');if(!v('vt'))return alert('Belum ada jenis kendaraan. Minta Admin menambahkannya.');
   if(!pend.rem)return alert('Foto hand rem wajib diunggah.');if(!pend.ganjal)return alert('Foto ganjalan roda wajib diunggah.');if(!pend.segitiga)return alert('Foto segitiga pengaman wajib diunggah.');
-  const[k,r,g,s,a]=await Promise.all(['kir','rem','ganjal','segitiga','safety'].map(x=>up(x,'loads')));
-  const{error}=await SB.from('loads').insert({plat,vehicle_type:v('vt'),chiller_temp:nn(v('ct')),kir_no:nn(v('kn')),kir_file:k,rem_file:r,ganjal_file:g,segitiga_file:s,safety_file:a,note:nn(v('ln'))});
+  const[k,r,g,s,a,sj]=await Promise.all(['kir','rem','ganjal','segitiga','safety','lsj'].map(x=>up(x,'loads')));
+  const{error}=await SB.from('loads').insert({plat,vehicle_type:v('vt'),driver:v('drv'),supplier:v('lsp'),qty_in:nn(v('lqt')),qty_unit:nn(v('lun')),sj_file:sj,chiller_temp:nn(v('ct')),kir_no:nn(v('kn')),kir_file:k,rem_file:r,ganjal_file:g,segitiga_file:s,safety_file:a,note:nn(v('ln'))});
   if(error)throw error;toast('Loading tersimpan');await go('load')}
 async function loadDetail(id){const l=D.loads.find(x=>x.id===id);if(!l)return;
   $('#sheet').innerHTML='<div class="mut">Memuat…</div>';$('#modal').classList.add('on');
-  const m=await sign([l.kir_file,l.rem_file,l.ganjal_file,l.segitiga_file,l.safety_file]);
-  $('#sheet').innerHTML=`<h1>${esc(l.plat)}</h1><div class="card">Jenis: ${esc(l.vehicle_type)}<br>Waktu: ${fmtT(l.created_at)}<br>Petugas: ${esc(nm(l.created_by))}<br>Suhu chiller: ${l.chiller_temp!=null?esc(l.chiller_temp)+' °C':'-'}<br>No. KIR: ${esc(l.kir_no||'-')}<br>Catatan: ${esc(l.note||'-')}</div>${dv('Buku KIR',l.kir_file,m)}${dv('Hand rem',l.rem_file,m)}${dv('Ganjalan roda',l.ganjal_file,m)}${dv('Segitiga pengaman',l.segitiga_file,m)}${dv('Safety anggota loading',l.safety_file,m)}<button class="btn ghost" onclick="closeM()">Tutup</button>`}
+  const m=await sign([l.sj_file,l.kir_file,l.rem_file,l.ganjal_file,l.segitiga_file,l.safety_file]);
+  $('#sheet').innerHTML=`<h1>${esc(l.plat)}</h1><div class="card">Jenis: ${esc(l.vehicle_type)}<br>Supir: ${esc(l.driver||'-')}<br>Supplier: ${esc(l.supplier||'-')}<br>Qty barang masuk (laporan): ${l.qty_in!=null?esc(l.qty_in)+' '+esc(l.qty_unit||''):'-'}<br>Waktu: ${fmtT(l.created_at)}<br>Petugas: ${esc(nm(l.created_by))}<br>Suhu chiller: ${l.chiller_temp!=null?esc(l.chiller_temp)+' °C':'-'}<br>No. KIR: ${esc(l.kir_no||'-')}<br>Catatan: ${esc(l.note||'-')}</div>${dv('Foto surat jalan',l.sj_file,m)}${dv('Buku KIR',l.kir_file,m)}${dv('Hand rem',l.rem_file,m)}${dv('Ganjalan roda',l.ganjal_file,m)}${dv('Segitiga pengaman',l.segitiga_file,m)}${dv('Safety anggota loading',l.safety_file,m)}<button class="btn ghost" onclick="closeM()">Tutup</button>`}
 function vtAdmin(){return`<div class="card"><b>Kelola jenis kendaraan</b>${D.vtypes.map(t=>`<div class="item" style="margin-top:8px;align-items:center;cursor:default"><span>${esc(t.name)}</span><span><button class="btn ghost sm" onclick="vtEdit(${t.id})">Ubah</button> <button class="btn ghost sm" onclick="vtDel(${t.id})">Hapus</button></span></div>`).join('')}<div class="row" style="margin-top:12px"><input id="nvt" placeholder="Jenis baru"><button class="btn sm" onclick="vtAdd()">Tambah</button></div></div>`}
 async function vtDo(p){const{error}=await p;if(error)alert(error.message);await refresh();render()}
 function vtAdd(){const n=$('#nvt').value.trim();if(!n)return alert('Isi nama jenis kendaraan.');vtDo(SB.from('vehicle_types').insert({name:n}))}
