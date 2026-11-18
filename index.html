@@ -143,7 +143,7 @@ function vStok(){const a=D.batches,exp=a.filter(b=>b.stock>0&&days(b.exp)!==null
 function lst(){const t=q.toLowerCase(),l=D.batches.filter(b=>[b.name,b.batch_no,b.sku,b.loc,b.seal,b.rph,b.code,b.barcode].join(' ').toLowerCase().includes(t)).sort((x,y)=>(x.stock===0)-(y.stock===0)||(x.exp||'9').localeCompare(y.exp||'9'));
   if(!D.batches.length)return'<div class="card mut">Belum ada stok. Buka tab Masuk untuk mencatat barang pertama.</div>';
   if(!l.length)return'<div class="card mut">Tidak ada hasil.</div>';
-  return l.map(b=>`<div class="card item" onclick="detail('${b.id}')"><div><b>${esc(b.name)}</b><br><small>Batch ${esc(b.batch_no)}${b.loc?' · Rak '+esc(b.loc):''}<br>ED ${fmt(b.exp)}</small><div style="margin-top:4px">${edTag(b)}${docTags(b)}</div></div><div class="qty ${b.stock===0?'mut':''}">${b.stock}<br><small>${esc(b.unit)}</small></div></div>`).join('')}
+  return l.map(b=>`<div class="card item" onclick="detail('${b.id}')"><div><b>${esc(b.name)}</b><br><small>Batch ${esc(b.batch_no)}${b.loc?' · Rak '+esc(b.loc):''}<br>ED ${fmt(b.exp)}<br>Input ${new Date(b.created_at).toLocaleString('id-ID',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})} · ${esc(nm(b.created_by))}</small><div style="margin-top:4px">${edTag(b)}${docTags(b)}</div></div><div class="qty ${b.stock===0?'mut':''}">${b.stock}<br><small>${esc(b.unit)}</small></div></div>`).join('')}
 async function detail(id){const b=D.batches.find(x=>x.id===id);if(!b)return;
   $('#sheet').innerHTML='<div class="mut">Memuat…</div>';$('#modal').classList.add('on');
   const m=await sign([b.photo_batch,b.photo_sj,b.coa,b.halal,b.nkv]);
