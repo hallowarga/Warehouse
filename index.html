@@ -57,11 +57,12 @@ iframe{width:100%;height:280px;border:1px solid var(--bd);border-radius:8px;marg
 <div id="modal"><div id="sheet"></div></div>
 <div id="toast"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <script>
 const SB=supabase.createClient('https://qtylzivpxlqpmfkaogoj.supabase.co','sb_publishable_L17-GlhLmYOjIZGrbf8Vgg_lJaU-O4v');
 const $=s=>document.querySelector(s);
 let me=null,tab='stok',q='',pend={},busy=false,D={batches:[],moves:[],loads:[],vtypes:[],staff:[]};
-const RL={petugas:'Petugas',admin:'Admin',superadmin:'Super Admin',security:'Security'};
+const RL={petugas:'Petugas',admin:'Admin',superadmin:'Super Admin',security:'Security',leader:'Leader'};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const today=()=>new Date().toISOString().slice(0,10);
 const fmt=d=>d?new Date(d).toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'}):'-';
@@ -95,7 +96,7 @@ async function refresh(){
 /* shell */
 function roleBar(){return`<div class="rb"><span>Masuk sebagai <b>${esc(me.name)}</b> (${RL[me.role]})</span><button onclick="logout()">Keluar</button></div>`}
 function render(){pend={};
-  $('#nav').innerHTML=(me.role==='security'?[['load','Loading']]:[['stok','Stok'],['in','Masuk'],['out','Keluar'],['load','Loading'],['log','Riwayat']]).map(([k,l])=>`<button ${tab===k?'aria-current="true"':''} onclick="go('${k}')">${l}</button>`).join('');
+  $('#nav').innerHTML=tabsFor().map(([k,l])=>`<button ${tab===k?'aria-current="true"':''} onclick="go('${k}')">${l}</button>`).join('');
   $('#app').innerHTML=roleBar()+{stok:vStok,in:vIn,out:vOut,load:vLoad,log:vLog}[tab]()}
 async function go(t){tab=t;q='';$('#app').innerHTML=roleBar()+'<div class="card mut">Memuat…</div>';await refresh();render();scrollTo(0,0)}
 function vLogin(){$('#nav').innerHTML='';$('#app').innerHTML=`<h1>Gudang</h1><div class="card"><label>Nama</label><input id="lgn" autocapitalize="none" autocomplete="username"><label>PIN</label><input id="lgp" type="password" inputmode="numeric" autocomplete="current-password"><button class="btn" onclick="run(this,doLogin)">Masuk</button></div>`}
@@ -106,14 +107,40 @@ async function boot(){const{data:{session}}=await SB.auth.getSession();if(!sessi
   if(error||!p||!p.active){await SB.auth.signOut();vLogin();return alert(error?'Gagal membaca profil: '+error.message:'Profil akun belum ada atau akun nonaktif. Jalankan SQL perbaikan profil di Supabase.')}
   me=p;go(p.role==='security'?'load':'stok')}
 function logout(){SB.auth.signOut().then(()=>{me=null;vLogin()})}
-function closeM(){$('#modal').classList.remove('on')}
+function tabsFor(){if(me.role==='security')return[['load','Loading']];if(me.role==='leader')return[['stok','Stok'],['out','Keluar'],['log','Riwayat']];return[['stok','Stok'],['in','Masuk'],['out','Keluar'],['load','Loading'],['log','Riwayat']]}
+let scanEnd=null;
+function closeM(){const f=scanEnd;scanEnd=null;if(f)f();$('#modal').classList.remove('on')}
+function scanCode(){return new Promise(async res=>{
+  if(!('BarcodeDetector' in window)){const c=prompt('Scan kamera belum didukung di browser ini. Ketik kode barcode:');return res(c?c.trim():null)}
+  let stream,stop=false;
+  const end=v=>{scanEnd=null;stop=true;if(stream)stream.getTracks().forEach(t=>t.stop());closeM();res(v)};
+  scanEnd=()=>end(null);
+  $('#sheet').innerHTML='<h1>Scan barcode</h1><video id="sv" playsinline muted style="width:100%;border-radius:10px;background:#000"></video><p class="mut">Arahkan kamera ke barcode.</p><button class="btn ghost" id="sm">Ketik manual</button><button class="btn ghost" id="sx">Batal</button>';
+  $('#modal').classList.add('on');
+  $('#sx').onclick=()=>end(null);
+  $('#sm').onclick=()=>{const c=prompt('Ketik kode barcode:');if(c)end(c.trim())};
+  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});const v=$('#sv');v.srcObject=stream;await v.play();
+    const det=new BarcodeDetector();
+    const loop=async()=>{if(stop)return;try{const r=await det.detect(v);if(r.length)return end(r[0].rawValue)}catch(e){}setTimeout(loop,250)};loop()
+  }catch(e){end(null);alert('Kamera tidak bisa dibuka. Izinkan akses kamera, atau pilih Ketik manual.')}
+})}
+async function scanTo(id){const c=await scanCode();if(c)$('#'+id).value=c}
+async function scanOut(){const c=await scanCode();if(!c)return;
+  const m=avail().filter(b=>b.barcode===c||b.code===c.toUpperCase()||b.sku===c);
+  if(!m.length){$('#sc').innerHTML='<span class="bad">Kode '+esc(c)+' tidak ditemukan atau stok habis.</span>';return}
+  $('#ob').value=m[0].id;obInfo();
+  $('#sc').innerHTML='<span class="ok">Kode '+esc(c)+': '+esc(m[0].name)+(m.length>1?' · '+m.length+' batch cocok, dipilih ED terdekat':'')+'</span>';$('#oq').focus()}
+async function movePhoto(id){const x=D.moves.find(m=>m.id===id);if(!x||!x.photo)return;
+  $('#sheet').innerHTML='<div class="mut">Memuat…</div>';$('#modal').classList.add('on');
+  const m=await sign([x.photo]),b=x.batches||{};
+  $('#sheet').innerHTML=`<h1>Foto pengeluaran</h1><div class="card">${esc(b.name||'-')} · ${x.qty} ${esc(b.unit||'')}<br><small class="mut">${fmtT(x.created_at)} · ${esc(nm(x.created_by))}</small></div>${dv('Foto pengeluaran',x.photo,m)}<button class="btn ghost" onclick="closeM()">Tutup</button>`}
 $('#modal').onclick=e=>{if(e.target.id==='modal')closeM()};
 
 /* stok */
 function vStok(){const a=D.batches,exp=a.filter(b=>b.stock>0&&days(b.exp)!==null&&days(b.exp)<=30).length;
   return`<h1>Stok gudang</h1><div class="stats"><div><b>${a.filter(b=>b.stock>0).length}</b><span>Batch aktif</span></div><div><b>${a.reduce((s,b)=>s+b.stock,0)}</b><span>Total unit</span></div><div><b class="${exp?'warn':''}">${exp}</b><span>ED ≤ 30 hari</span></div></div>
   <input type="search" placeholder="Cari nama, SKU, batch, rak, segel" value="${esc(q)}" oninput="q=this.value;$('#lst').innerHTML=lst()" aria-label="Cari"><div id="lst" style="margin-top:10px">${lst()}</div>`}
-function lst(){const t=q.toLowerCase(),l=D.batches.filter(b=>[b.name,b.batch_no,b.sku,b.loc,b.seal,b.rph].join(' ').toLowerCase().includes(t)).sort((x,y)=>(x.stock===0)-(y.stock===0)||(x.exp||'9').localeCompare(y.exp||'9'));
+function lst(){const t=q.toLowerCase(),l=D.batches.filter(b=>[b.name,b.batch_no,b.sku,b.loc,b.seal,b.rph,b.code,b.barcode].join(' ').toLowerCase().includes(t)).sort((x,y)=>(x.stock===0)-(y.stock===0)||(x.exp||'9').localeCompare(y.exp||'9'));
   if(!D.batches.length)return'<div class="card mut">Belum ada stok. Buka tab Masuk untuk mencatat barang pertama.</div>';
   if(!l.length)return'<div class="card mut">Tidak ada hasil.</div>';
   return l.map(b=>`<div class="card item" onclick="detail('${b.id}')"><div><b>${esc(b.name)}</b><br><small>Batch ${esc(b.batch_no)}${b.loc?' · Rak '+esc(b.loc):''}<br>ED ${fmt(b.exp)}</small><div style="margin-top:4px">${edTag(b)}${docTags(b)}</div></div><div class="qty ${b.stock===0?'mut':''}">${b.stock}<br><small>${esc(b.unit)}</small></div></div>`).join('')}
@@ -121,13 +148,15 @@ async function detail(id){const b=D.batches.find(x=>x.id===id);if(!b)return;
   $('#sheet').innerHTML='<div class="mut">Memuat…</div>';$('#modal').classList.add('on');
   const m=await sign([b.photo_batch,b.photo_sj,b.coa,b.halal,b.nkv]);
   const mv=D.moves.filter(x=>x.batch_id===id).map(x=>`<div class="mut">${fmtT(x.created_at)} · ${x.type==='in'?'Masuk':'Keluar'} ${x.qty} ${esc(b.unit)}${x.party?' · '+esc(x.party):''} · ${esc(nm(x.created_by))}</div>`).join('');
-  $('#sheet').innerHTML=`<h1>${esc(b.name)}</h1><div class="card">SKU: ${esc(b.sku||'-')}<br>Batch: ${esc(b.batch_no)}<br>Supplier: ${esc(b.supplier||'-')}<br>No. surat jalan: ${esc(b.sj_no||'-')}<br>Produksi: ${fmt(b.mfg)} · ED: ${fmt(b.exp)}<br>Rak: ${esc(b.loc||'-')}<br>Stok: <b>${b.stock}</b> dari ${b.qty} ${esc(b.unit)}<br>No. sertifikat halal: ${esc(b.halal_no||'-')}<br>Kode rumah potong: ${esc(b.rph||'-')}<br>Suhu terima: ${b.temp!=null?esc(b.temp)+' °C':'-'}<br>Kode segel: ${esc(b.seal||'-')}<br>No. NKV: ${esc(b.nkv_no||'-')}<br>Dicatat oleh: ${esc(nm(b.created_by))}</div>
-  ${dv('Foto kode batch',b.photo_batch,m)}${dv('Foto surat jalan',b.photo_sj,m)}${dv('COA',b.coa,m)}${dv('Sertifikat halal',b.halal,m)}${dv('Sertifikat NKV',b.nkv,m)}<h2>Pergerakan</h2>${mv}<button class="btn ghost" onclick="closeM()">Tutup</button>`}
+  $('#sheet').innerHTML=`<h1>${esc(b.name)}</h1><div class="card">SKU: ${esc(b.sku||'-')}<br>Batch: ${esc(b.batch_no)}<br>Kode sistem: ${esc(b.code||'-')}<br>Barcode barang: ${esc(b.barcode||'-')}<br>Supplier: ${esc(b.supplier||'-')}<br>No. surat jalan: ${esc(b.sj_no||'-')}<br>Produksi: ${fmt(b.mfg)} · ED: ${fmt(b.exp)}<br>Rak: ${esc(b.loc||'-')}<br>Stok: <b>${b.stock}</b> dari ${b.qty} ${esc(b.unit)}<br>No. sertifikat halal: ${esc(b.halal_no||'-')}<br>Kode rumah potong: ${esc(b.rph||'-')}<br>Suhu terima: ${b.temp!=null?esc(b.temp)+' °C':'-'}<br>Kode segel: ${esc(b.seal||'-')}<br>No. NKV: ${esc(b.nkv_no||'-')}<br>Dicatat oleh: ${esc(nm(b.created_by))}</div>
+  <h2>Label barcode</h2><svg id="bcs" style="max-width:100%;background:#fff;border-radius:8px"></svg><small class="mut">Screenshot atau cetak untuk ditempel di barang.</small>${dv('Foto kode batch',b.photo_batch,m)}${dv('Foto surat jalan',b.photo_sj,m)}${dv('COA',b.coa,m)}${dv('Sertifikat halal',b.halal,m)}${dv('Sertifikat NKV',b.nkv,m)}<h2>Pergerakan</h2>${mv}<button class="btn ghost" onclick="closeM()">Tutup</button>`;
+  try{if(b.code)JsBarcode('#bcs',b.code,{format:'CODE128',height:60,displayValue:true,margin:8})}catch(e){}}
 
 /* masuk */
 function vIn(){return`<h1>Barang masuk</h1><div class="card">
 <label>Nama barang</label><input id="n" autocomplete="off">
 <div class="row"><div><label>SKU <small>(opsional)</small></label><input id="sku"></div><div><label>Satuan</label><input id="u" value="pcs"></div></div>
+<label>Barcode barang <small>(opsional, scan atau ketik)</small></label><div class="row" style="grid-template-columns:1fr auto"><input id="bc" autocomplete="off"><button class="btn sm" onclick="scanTo('bc')">Scan</button></div>
 <label>Supplier</label><input id="sup">
 <div class="row"><div><label>No. batch</label><input id="bt"></div><div><label>Jumlah</label><input id="qt" type="number" inputmode="decimal" min="0"></div></div>
 <div class="row"><div><label>Tgl produksi <small>(opsional)</small></label><input id="mfg" type="date"></div><div><label>Tgl kedaluwarsa</label><input id="exp" type="date"></div></div>
@@ -147,17 +176,18 @@ async function subIn(){const v=i=>$('#'+i).value.trim(),qty=parseFloat(v('qt'));
   if(!v('n'))return alert('Nama barang wajib diisi.');if(!v('bt'))return alert('No. batch wajib diisi.');if(!(qty>0))return alert('Jumlah harus lebih dari 0.');
   if(!pend.photo)return alert('Foto kode batch wajib diunggah.');if(!pend.sj)return alert('Foto surat jalan wajib diunggah.');
   const[pb,ps,pc,ph,pn]=await Promise.all(['photo','sj','coa','halal','nkv'].map(k=>up(k)));
-  const{error}=await SB.from('batches').insert({name:v('n'),sku:nn(v('sku')),unit:v('u')||'pcs',supplier:nn(v('sup')),batch_no:v('bt'),qty,mfg:nn(v('mfg')),exp:nn(v('exp')),loc:nn(v('loc')),halal_no:nn(v('hn')),rph:nn(v('rph')),temp:nn(v('tmp')),seal:nn(v('sg')),nkv_no:nn(v('nk')),sj_no:nn(v('sjn')),photo_batch:pb,photo_sj:ps,coa:pc,halal:ph,nkv:pn});
+  const{error}=await SB.from('batches').insert({name:v('n'),sku:nn(v('sku')),barcode:nn(v('bc')),unit:v('u')||'pcs',supplier:nn(v('sup')),batch_no:v('bt'),qty,mfg:nn(v('mfg')),exp:nn(v('exp')),loc:nn(v('loc')),halal_no:nn(v('hn')),rph:nn(v('rph')),temp:nn(v('tmp')),seal:nn(v('sg')),nkv_no:nn(v('nk')),sj_no:nn(v('sjn')),photo_batch:pb,photo_sj:ps,coa:pc,halal:ph,nkv:pn});
   if(error)throw error;toast('Barang masuk tersimpan');await go('stok')}
 
 /* keluar */
 const avail=()=>D.batches.filter(b=>b.stock>0).sort((x,y)=>(x.exp||'9').localeCompare(y.exp||'9'));
 function vOut(){const a=avail();if(!a.length)return'<h1>Barang keluar</h1><div class="card mut">Belum ada stok yang bisa dikeluarkan.</div>';
-  return`<h1>Barang keluar</h1><div class="card"><label>Pilih batch <small>(urut ED terdekat)</small></label>
+  return`<h1>Barang keluar</h1><div class="card"><button class="btn" style="margin:0 0 6px" onclick="scanOut()">Scan barcode</button><div id="sc" style="margin-bottom:6px"></div>
+<label>Pilih batch <small>(urut ED terdekat)</small></label>
 <select id="ob" onchange="obInfo()">${a.map(b=>`<option value="${b.id}">${esc(b.name)} · ${esc(b.batch_no)} · sisa ${b.stock} ${esc(b.unit)}</option>`).join('')}</select><div id="oi" class="mut" style="margin-top:6px"></div>
 <label>Jumlah keluar</label><input id="oq" type="number" inputmode="decimal" min="0">
 <label>Tujuan atau customer</label><input id="op">
-<label>No. surat jalan <small>(opsional)</small></label><input id="od">
+<label>No. surat jalan <small>(opsional)</small></label><input id="od">${me.role==='leader'?`<label>Foto pengeluaran</label>${upl('fx','outph','Ketuk untuk ambil foto pengeluaran',true,'image/*')}`:''}
 <button class="btn out" onclick="run(this,subOut)">Simpan barang keluar</button></div>`}
 function obInfo(){const b=D.batches.find(x=>x.id===$('#ob').value);if(b)$('#oi').innerHTML=`Stok ${b.stock} ${esc(b.unit)} · ED ${fmt(b.exp)} ${edTag(b)}`}
 async function subOut(){const b=D.batches.find(x=>x.id===$('#ob').value),qty=parseFloat($('#oq').value);
@@ -165,7 +195,8 @@ async function subOut(){const b=D.batches.find(x=>x.id===$('#ob').value),qty=par
   const f=avail().find(x=>x.name===b.name&&x.id!==b.id&&x.exp&&b.exp&&x.exp<b.exp);
   if(f&&!confirm(`Batch ${f.batch_no} untuk barang yang sama punya ED lebih dekat (${fmt(f.exp)}). Tetap keluarkan batch ini?`))return;
   if(days(b.exp)!==null&&days(b.exp)<0&&!confirm('Batch ini sudah kedaluwarsa. Tetap keluarkan?'))return;
-  const{error}=await SB.rpc('do_outbound',{p_batch:b.id,p_qty:qty,p_party:$('#op').value.trim(),p_doc:nn($('#od').value.trim())});
+  if(me.role==='leader'&&!pend.outph)return alert('Foto pengeluaran wajib diunggah.');const ph=await up('outph');
+  const{error}=await SB.rpc('do_outbound',{p_batch:b.id,p_qty:qty,p_party:$('#op').value.trim(),p_doc:nn($('#od').value.trim()),p_photo:ph});
   if(error)throw error;toast('Barang keluar tersimpan');await go('stok')}
 
 /* loading */
@@ -206,11 +237,11 @@ function vtEdit(id){const t=D.vtypes.find(x=>x.id===id),n=(prompt('Ubah nama jen
 function vtDel(id){const t=D.vtypes.find(x=>x.id===id);if(confirm('Hapus jenis "'+t.name+'"? Data loading lama tidak berubah.'))vtDo(SB.from('vehicle_types').delete().eq('id',id))}
 
 /* riwayat */
-function vLog(){return`<h1>Riwayat</h1>${D.moves.length?D.moves.map(x=>{const b=x.batches||{};return`<div class="card mv ${x.type==='out'?'o':''}"><b>${x.type==='in'?'Masuk':'Keluar'} · ${esc(b.name||'-')}</b><br>Batch ${esc(b.batch_no||'-')} · ${x.qty} ${esc(b.unit||'')}<br><small class="mut">${fmtT(x.created_at)}${x.party?' · '+esc(x.party):''}${x.doc?' · SJ '+esc(x.doc):''} · ${esc(nm(x.created_by))}</small></div>`}).join(''):'<div class="card mut">Belum ada transaksi.</div>'}${me.role==='superadmin'?vStaff():''}`}
-function vStaff(){return`<h2>Kelola petugas</h2><div class="card">${D.staff.map(s=>{const self=s.id===me.id?'disabled':'';return`<div class="item" style="cursor:default;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px"><span>${esc(s.name)}</span><span><select style="width:auto" ${self} onchange="setStaff('${s.id}',{role:this.value})">${['petugas','admin','superadmin','security'].map(r=>`<option value="${r}" ${s.role===r?'selected':''}>${RL[r]}</option>`).join('')}</select> <label style="display:inline"><input type="checkbox" style="width:auto" ${self} ${s.active?'checked':''} onchange="setStaff('${s.id}',{active:this.checked})"> Aktif</label> <button class="btn ghost sm" onclick="resetPin('${s.id}')">Reset PIN</button></span></div>`}).join('')}<h2 style="margin-top:14px">Tambah petugas</h2><label>Nama login <small>(huruf kecil, tanpa spasi)</small></label><input id="sn" autocapitalize="none" autocomplete="off"><div class="row"><div><label>PIN 6 angka</label><input id="sp" inputmode="numeric" maxlength="6"></div><div><label>Peran</label><select id="sr"><option value="petugas">Petugas</option><option value="admin">Admin</option><option value="superadmin">Super Admin</option><option value="security">Security</option></select></div></div><button class="btn" onclick="run(this,addStaff)">Tambah petugas</button></div>`}
+function vLog(){return`<h1>Riwayat</h1>${D.moves.length?D.moves.map(x=>{const b=x.batches||{};return`<div class="card mv ${x.type==='out'?'o':''}"><b>${x.type==='in'?'Masuk':'Keluar'} · ${esc(b.name||'-')}</b><br>Batch ${esc(b.batch_no||'-')} · ${x.qty} ${esc(b.unit||'')}<br><small class="mut">${fmtT(x.created_at)}${x.party?' · '+esc(x.party):''}${x.doc?' · SJ '+esc(x.doc):''} · ${esc(nm(x.created_by))}</small>${x.photo?`<br><button class="btn ghost sm" style="margin-top:8px" onclick="movePhoto(${x.id})">Foto pengeluaran</button>`:''}</div>`}).join(''):'<div class="card mut">Belum ada transaksi.</div>'}${me.role==='superadmin'?vStaff():''}`}
+function vStaff(){return`<h2>Kelola petugas</h2><div class="card">${D.staff.map(s=>{const self=s.id===me.id?'disabled':'';return`<div class="item" style="cursor:default;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px"><span>${esc(s.name)}</span><span><select style="width:auto" ${self} onchange="setStaff('${s.id}',{role:this.value})">${['petugas','admin','superadmin','security','leader'].map(r=>`<option value="${r}" ${s.role===r?'selected':''}>${RL[r]}</option>`).join('')}</select> <label style="display:inline"><input type="checkbox" style="width:auto" ${self} ${s.active?'checked':''} onchange="setStaff('${s.id}',{active:this.checked})"> Aktif</label> <button class="btn ghost sm" onclick="resetPin('${s.id}')">Reset PIN</button></span></div>`}).join('')}<h2 style="margin-top:14px">Tambah petugas</h2><label>Nama login <small>(huruf kecil, tanpa spasi)</small></label><input id="sn" autocapitalize="none" autocomplete="off"><div class="row"><div><label>PIN 6 angka</label><input id="sp" inputmode="numeric" maxlength="6"></div><div><label>Peran</label><select id="sr"><option value="petugas">Petugas</option><option value="admin">Admin</option><option value="superadmin">Super Admin</option><option value="security">Security</option><option value="leader">Leader</option></select></div></div><button class="btn" onclick="run(this,addStaff)">Tambah petugas</button></div>`}
 async function setStaff(id,p){const{error}=await SB.from('profiles').update(p).eq('id',id);if(error)alert(error.message);await refresh();render()}
 async function callFn(body){const{data,error}=await SB.functions.invoke('bright-api',{body});if(error){let m=error.message;try{m=(await error.context.json()).error||m}catch(e){}throw new Error(m)}return data}
-async function addStaff(){const n=$('#sn').value.trim().toLowerCase().replace(/\s/g,''),p=$('#sp').value.trim();if(n.length<2)return alert('Isi nama login.');if(!/^\d{6}$/.test(p))return alert('PIN harus 6 angka.');await callFn({name:n,pin:p,role:$('#sr').value});toast('Petugas '+n+' ditambahkan');await go('log')}
+async function addStaff(){const n=$('#sn').value.trim().toLowerCase().replace(/\s/g,''),p=$('#sp').value.trim();if(n.length<2)return alert('Isi nama login.');if(!/^\d{6}$/.test(p))return alert('PIN harus 6 angka.');const rl=$('#sr').value;await callFn({name:n,pin:p,role:rl==='leader'?'petugas':rl});if(rl==='leader'){const{error}=await SB.from('profiles').update({role:'leader'}).eq('name',n);if(error)throw error}toast('Petugas '+n+' ditambahkan');await go('log')}
 function resetPin(id){const s=D.staff.find(x=>x.id===id),p=prompt('PIN baru untuk '+s.name+' (6 angka)');if(!p)return;if(!/^\d{6}$/.test(p))return alert('PIN harus 6 angka.');callFn({action:'reset',id,pin:p}).then(()=>toast('PIN diperbarui')).catch(e=>alert('Gagal: '+e.message))}
 boot();
 </script>
